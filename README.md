@@ -23,7 +23,7 @@
 
 ### 从打包文件安装
 
-1. 下载或自行生成 `dsh-awp-<版本>.tgz`（生成方法见下方「开发」）。
+1. 从 [GitHub Releases](https://github.com/66neko/dsh-awp/releases) 的 Assets 下载 `dsh-awp-<版本>.tgz`，或自行打包（见下方「开发」）。
 2. 打开 DSH「设置 → 插件 → 添加插件」，输入 `.tgz` 文件的**绝对路径**，例如 `D:\downloads\dsh-awp-0.1.0.tgz`。
 3. 安装时 DSH 会从 npm 源下载依赖 `mqtt`，需要能访问 npm 源。
 
@@ -124,6 +124,16 @@ pnpm pack          打包成 dsh-awp-<版本>.tgz
 ```
 
 参与开发前请阅读 [AGENTS.md](AGENTS.md)。
+
+### 发布插件
+
+1. 更新 `package.json` 的 `version`，提交并推送到 GitHub。
+2. 在 [GitHub Releases](https://github.com/66neko/dsh-awp/releases/new) 创建 Release，标签使用对应版本（例如版本 `0.2.3` 使用标签 `v0.2.3`），并选择包含上述修改的提交。
+3. 点击发布后，GitHub Actions 会检出该标签，使用 Node.js 24 安装锁定的依赖，检查语法、运行测试，再执行 `pnpm pack`。成功后，`dsh-awp-<版本>.tgz` 会自动出现在该 Release 的 Assets 中，可直接下载并安装到 DSH。
+
+正式版和预发布版都会触发；保存为草稿时不会触发。标签支持 `v<版本>` 或 `<版本>`，必须与 `package.json` 一致；检查或打包失败时不会上传插件包，可在 Actions 页面查看原因并重新运行。
+
+也可以在 Actions →「打包并上传插件」→ Run workflow 手动运行：标签留空时仅检查和打包，产物保留 14 天；填写已有 Release 的标签时，会为该 Release 上传或替换同名安装包。自动流程使用 GitHub 提供的 `GITHUB_TOKEN`，无需配置额外密钥。
 
 ## 文档
 

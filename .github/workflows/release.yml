@@ -1,0 +1,92 @@
+name: 打包并上传插件
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 已发布 Release 的标签；留空时只检查和打包
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-package-${{ github.event.release.tag_name || inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: 检查并打包
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    env:
+      RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+    steps:
+      - name: 获取对应版本的源码
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name || inputs.tag || github.sha }}
+          persist-credentials: false
+
+      - name: 配置 pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: 配置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: 读取并校验版本
+        id: metadata
+        run: |
+          node --input-type=module <<'NODE'
+          import { appendFileSync, readFileSync } from 'node:fs'
+
+          const { name, version } = JSON.parse(readFileSync('package.json', 'utf8'))
+          const tag = process.env.RELEASE_TAG
+          if (tag && tag !== version && tag !== `v${version}`) {
+            throw new Error(`Release 标签 ${tag} 与 package.json 版本 ${version} 不一致`)
+          }
+          appendFileSync(process.env.GITHUB_OUTPUT, `archive=dist/${name}-${version}.tgz\nversion=${version}\n`)
+          NODE
+
+      - name: 安装依赖
+        run: pnpm install --frozen-lockfile
+
+      - name: 检查 JavaScript 语法
+        run: git ls-files -z '*.js' | xargs -0 -r -n 1 node --check
+
+      - name: 运行测试
+        run: pnpm run check
+
+      - name: 打包并核对文件清单
+        env:
+          ARCHIVE: ${{ steps.metadata.outputs.archive }}
+        run: |
+          pnpm pack --pack-destination dist
+          tar -tzf "$ARCHIVE"
+
+      - name: 保存工作流产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-awp-${{ steps.metadata.outputs.version }}
+          path: ${{ steps.metadata.outputs.archive }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: 上传到 Release 附件
+        if: env.RELEASE_TAG != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ARCHIVE: ${{ steps.metadata.outputs.archive }}
+        run: gh release upload "$RELEASE_TAG" "$ARCHIVE" --clobber

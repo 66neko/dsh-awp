@@ -31,7 +31,8 @@
     "docs/",
     "README.md",
     "LICENSE",
-    "AGENTS.md"
+    "AGENTS.md",
+    "!.github/"
   ],
   "bin": {
     "awp-cli": "./bin/awp-cli.js"

@@ -202,6 +202,8 @@ pnpm pack             # 生成 dsh-awp-<版本>.tgz
 
 `package.json` 的 `files` 列出全部运行时文件，打包后用 `tar -tzf` 核对清单。
 
+GitHub 发布流程由 `.github/workflows/release.yml` 管理：发布 Release（含预发布版）时检出对应标签，校验标签与包版本一致，在 Node.js 24 上安装锁定依赖、检查语法、运行测试并打包，将 `.tgz` 上传为 Release 附件。支持手动运行以验证打包，或为已有 Release 补传附件；工作流配置不进入插件安装包。
+
 ## 9. 以后接入 Claude Code 和 Codex
 
 `src/core/` 不引用 DSH，可以直接复用：
