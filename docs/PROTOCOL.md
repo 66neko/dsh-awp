@@ -176,7 +176,7 @@ AWP/1 <sig>
 - QoS 1，`retain = false`，payload 为帧的 UTF-8 字节
 - 客户端 id 固定为 `awp-{nodeId}`，使用持久会话（clean session = false），节点离线期间 broker 会暂存消息
 - 所有回复都作为新消息发布到对方收件箱，没有同步回复
-- 建议使用 `mqtts://`（TLS）
+- 建议使用 `mqtts://`（TLS）。自建 broker 使用自签证书时，实现方应支持配置自定义 CA 证书（DSH 实现里是 `mqtt.caFile` / `mqtt.caPem`），不要为此关闭证书校验
 
 ## 8. 安全要求
 

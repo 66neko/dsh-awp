@@ -7,7 +7,7 @@
  */
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { dirname, isAbsolute, join } from 'node:path'
 import { homedir, hostname } from 'node:os'
 import { isNodeId } from '../core/frame.js'
 
@@ -20,7 +20,19 @@ export function defaultConfig() {
     nodeId: '',
     transport: 'http',
     http: { host: '127.0.0.1', port: 7820, maxBodyBytes: 1_048_576 },
-    mqtt: { url: '', topic: '', username: '' },
+    mqtt: {
+      url: '',
+      topic: '',
+      username: '',
+      // 自定义 CA：给自建 broker 用。caFile 是 server.pem 的绝对路径，
+      // caPem 是直接粘贴的证书内容，两者只能选一个。
+      caFile: '',
+      caPem: '',
+      // TLS 证书校验使用的主机名（证书 CN/SAN 与连接地址不一致时填）。
+      servername: '',
+      // 关闭证书校验：只用于自签测试，生产不要开。
+      allowInvalidCert: false,
+    },
     peers: [],
     worker: {
       enabled: false,
@@ -68,6 +80,15 @@ export function validateConfig(raw) {
   if (config.transport === 'mqtt') {
     if (!config.mqtt?.url || !/^mqtts?:\/\/.+/.test(config.mqtt.url)) errors.push('MQTT 地址不合法')
     if (!config.mqtt?.topic || /[+#]/.test(config.mqtt.topic)) errors.push('MQTT 主题前缀不合法')
+    const caFile = typeof config.mqtt?.caFile === 'string' ? config.mqtt.caFile.trim() : ''
+    const caPem = typeof config.mqtt?.caPem === 'string' ? config.mqtt.caPem.trim() : ''
+    if (caFile && caPem) errors.push('CA 证书只能选一种来源：文件路径或粘贴内容')
+    if (caFile && !isAbsolute(caFile)) errors.push('CA 证书文件需要绝对路径')
+    if (caPem && !caPem.includes('BEGIN CERTIFICATE')) errors.push('粘贴的 CA 证书不是 PEM 格式')
+    if (config.mqtt?.allowInvalidCert === true && /^mqtt:\/\//.test(config.mqtt.url ?? '')) {
+      // 明文连接本来就没有证书，开关无意义但不阻塞启动
+      config.mqtt.allowInvalidCert = false
+    }
   }
   if (!Array.isArray(config.peers)) config.peers = []
   const seen = new Set()

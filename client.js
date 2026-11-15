@@ -165,6 +165,7 @@ window.__ModuleLoader__.load({
           const [feedback, setFeedback] = React.useState('')
           const [secretForm, setSecretForm] = React.useState(null)
           const [peerForm, setPeerForm] = React.useState(null)
+          const [pemForm, setPemForm] = React.useState(null)
           const [catalog, setCatalog] = React.useState(null)
           const [presets, setPresets] = React.useState(null)
 
@@ -347,6 +348,11 @@ window.__ModuleLoader__.load({
           } else {
             if (!/^mqtts?:\/\/.+/.test(draft.mqtt?.url ?? '')) fieldErrors.mqttUrl = '需以 mqtt:// 或 mqtts:// 开头'
             if (!draft.mqtt?.topic || /[+#]/.test(draft.mqtt.topic)) fieldErrors.mqttTopic = '主题前缀不能为空，且不能含 + 或 #'
+            const caFile = (draft.mqtt?.caFile ?? '').trim()
+            const caPem = (draft.mqtt?.caPem ?? '').trim()
+            if (caFile && caPem) fieldErrors.mqttCa = '文件与粘贴内容只能选一种'
+            else if (caFile && !/^[A-Za-z]:[\\/]|^\//.test(caFile)) fieldErrors.mqttCa = 'CA 证书文件需要绝对路径'
+            else if (caPem && !caPem.includes('BEGIN CERTIFICATE')) fieldErrors.mqttCa = '粘贴的内容不是 PEM 证书'
           }
           for (const peer of draft.peers ?? []) {
             if (!NODE_ID_PATTERN.test(peer.id)) fieldErrors[`peer-${peer.id}`] = '对端 ID 格式不合法'
@@ -556,6 +562,48 @@ window.__ModuleLoader__.load({
                   },
                 }, '确定'),
               ),
+              // ---- TLS：自定义 CA ----
+              draft.transport === 'mqtt' && h(Row, {
+                label: 'CA 证书文件',
+                hint: '自建 broker 的 server.pem 绝对路径；留空用系统信任链',
+                error: fieldErrors.mqttCa,
+              },
+                text(draft.mqtt.caFile ?? '', (value) => updateConfig({
+                  ...draft,
+                  mqtt: { ...draft.mqtt, caFile: value.trim(), caPem: '' },
+                }), { placeholder: 'D:\\certs\\server.pem', spellCheck: false }),
+                h('button', {
+                  style: { ...styles.button, marginLeft: '8px' },
+                  onClick: () => setPemForm(pemForm === 'open' ? null : 'open'),
+                }, pemForm === 'open' ? '收起粘贴' : '或粘贴证书'),
+              ),
+              draft.transport === 'mqtt' && pemForm === 'open' && h('div', { style: styles.row },
+                h('span', { style: styles.label }, ''),
+                h('textarea', {
+                  value: draft.mqtt.caPem ?? '',
+                  rows: 6,
+                  placeholder: '-----BEGIN CERTIFICATE-----\n…\n-----END CERTIFICATE-----',
+                  onChange: (e) => updateConfig({
+                    ...draft,
+                    mqtt: { ...draft.mqtt, caPem: e.target.value, caFile: '' },
+                  }),
+                  style: { ...styles.input, width: '380px', fontFamily: 'ui-monospace, Menlo, monospace', fontSize: '11px' },
+                }),
+              ),
+              draft.transport === 'mqtt' && h(Row, {
+                label: '证书主机名',
+                hint: '证书 CN/SAN 与连接地址不一致时填写；一般留空',
+              },
+                text(draft.mqtt.servername ?? '', (value) => updateConfig({ ...draft, mqtt: { ...draft.mqtt, servername: value.trim() } }), { placeholder: 'broker.example.com', spellCheck: false }),
+              ),
+              draft.transport === 'mqtt' && h(Row, {
+                label: '跳过证书校验',
+                hint: '仅供自签测试；生产请配置 CA 证书',
+              },
+                checkbox(draft.mqtt.allowInvalidCert === true, (checked) => updateConfig({ ...draft, mqtt: { ...draft.mqtt, allowInvalidCert: checked } })),
+              ),
+              draft.transport === 'mqtt' && draft.mqtt.allowInvalidCert === true && h('div', { style: { ...styles.banner, ...styles.warn, marginLeft: '120px' } },
+                '已关闭 TLS 证书校验：连接可能被中间人劫持。仅用于本地自签 broker 调试。'),
             ),
 
             // ---------- 对端 ----------

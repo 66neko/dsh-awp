@@ -7,7 +7,7 @@
 
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { networkSignature } from '../src/host/service.js'
+import { AwpService, networkSignature } from '../src/host/service.js'
 import { defaultConfig, validateConfig } from '../src/host/config-store.js'
 
 /** 一份可用的基准配置。 */
@@ -66,6 +66,49 @@ describe('service', () => {
 
     it('空配置返回空签名', () => {
       assert.equal(networkSignature(null), '')
+    })
+  })
+
+  describe('applyConfig MQTT TLS 配置', () => {
+    for (const [field, value] of Object.entries({
+      caFile: '/certs/broker.pem',
+      caPem: '-----BEGIN CERTIFICATE-----\nexample\n-----END CERTIFICATE-----',
+      servername: 'broker.example.com',
+      allowInvalidCert: true,
+    })) {
+      it(`修改或清除 ${field} 都会重建连接`, async () => {
+        const service = new AwpService({ get: () => null })
+        const before = baseConfig()
+        before.transport = 'mqtt'
+        before.mqtt = { ...before.mqtt, url: 'mqtts://broker:8883', topic: 'awp/t' }
+        service.config = before
+        service.node = { peers: new Map() }
+        const restarted = []
+        service.restart = async (config) => { restarted.push(config) }
+
+        const after = { ...before, mqtt: { ...before.mqtt, [field]: value } }
+        await service.applyConfig(after)
+        assert.equal(restarted.length, 1, '更新 TLS 设置必须重建连接')
+        assert.equal(restarted[0], after)
+
+        await service.applyConfig(before)
+        assert.equal(restarted.length, 2, '恢复证书校验或清除证书设置也必须重建连接')
+        assert.equal(restarted[1], before)
+      })
+    }
+
+    it('旧配置补齐默认 TLS 字段不会重启连接', async () => {
+      const service = new AwpService({ get: () => null })
+      const before = baseConfig()
+      before.transport = 'mqtt'
+      before.mqtt = { url: 'mqtts://broker:8883', topic: 'awp/t', username: '' }
+      service.config = before
+      service.node = { peers: new Map() }
+      service.restart = async () => { assert.fail('默认 TLS 字段不应触发重启') }
+      await service.applyConfig({
+        ...before,
+        mqtt: { ...defaultConfig().mqtt, ...before.mqtt },
+      })
     })
   })
 

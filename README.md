@@ -24,8 +24,8 @@
 ### 从打包文件安装
 
 1. 从 [GitHub Releases](https://github.com/66neko/dsh-awp/releases) 的 Assets 下载 `dsh-awp-<版本>.tgz`，或自行打包（见下方「开发」）。
-2. 打开 DSH「设置 → 插件 → 添加插件」，输入 `.tgz` 文件的**绝对路径**，例如 `D:\downloads\dsh-awp-0.1.0.tgz`。
-3. 安装时 DSH 会从 npm 源下载依赖 `mqtt`，需要能访问 npm 源。
+2. 打开 DSH「设置 → 插件 → 添加插件」，输入 `.tgz` 文件的**绝对路径**，例如 `D:\downloads\dsh-awp-0.3.0.tgz`。
+3. **安装不需要联网**：运行所需的 `mqtt` 及其传递依赖已随包放在 `vendor/` 里。
 
 ### 从源码目录安装
 
@@ -88,6 +88,28 @@ B 的侧边栏会出现一个 `[AWP] server-a · …` 会话。完成后，结�
 
 两台机器都选择 MQTT，填写同一个服务器地址（如 `mqtts://broker.example.com:8883`）和同一个主题前缀（如 `awp/team1`）。每个节点订阅 `<主题前缀>/<节点 ID>`，对端只需要填 ID，不需要 URL。使用 MQTT 时必须设置共享密钥。
 
+#### 自建 broker 与自定义证书
+
+如果你的 broker 用自签证书（例如自己生成的 `server.pem`），在「通信方式 → MQTT」里填：
+
+| 字段 | 说明 |
+|---|---|
+| **CA 证书文件** | `server.pem` 的**绝对路径**，例如 `D:\certs\server.pem`。插件会在启动时读取，读不到会拒绝启动并给出原因 |
+| **或粘贴证书** | 直接把 PEM 文本粘进文本框（与文件路径二选一） |
+| **证书主机名** | 证书的 CN/SAN 与连接地址不一致时填（如连 `10.0.0.5` 但证书是 `broker.example.com`） |
+| **跳过证书校验** | 仅供自签调试，会显示风险提示；生产环境请配 CA |
+
+示例 `server.pem` 生成与自签流程（openssl）：
+
+```sh
+openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
+  -keyout server.key -out server.pem -subj "/CN=broker.example.com"
+```
+
+把 `server.pem` 填进上面的「CA 证书文件」，broker 端使用同一份 `server.key` / `server.pem` 即可。
+
+修改 CA 来源、证书主机名或证书校验开关后，保存会自动重建 MQTT 连接并应用新设置。
+
 ## Agent 工具
 
 | 工具 | 作用 |
@@ -118,6 +140,7 @@ node bin/awp-cli.js send  --node cli --peer server-b --url http://127.0.0.1:7820
 
 ```
 pnpm install       安装依赖
+pnpm run vendor    更新离线运行依赖（修改依赖后需重新生成并提交 vendor/）
 pnpm test          运行单元测试
 pnpm run check     语法检查 + 单元测试
 pnpm pack          打包成 dsh-awp-<版本>.tgz

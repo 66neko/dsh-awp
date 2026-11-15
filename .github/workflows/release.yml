@@ -62,8 +62,19 @@ jobs:
       - name: 安装依赖
         run: pnpm install --frozen-lockfile
 
+      - name: 校验 vendor 与锁文件一致
+        run: |
+          # vendor/ 是提交进仓库的运行时依赖（离线安装用）。CI 重新生成一次，
+          # 若与提交内容不同说明有人改了依赖却忘了提交 vendor。
+          node scripts/vendor-deps.mjs
+          if [ -n "$(git status --porcelain vendor)" ]; then
+            echo "::error::vendor/ 与 pnpm-lock.yaml 不一致，请在本地运行 pnpm run vendor 并提交结果"
+            git status --porcelain vendor
+            exit 1
+          fi
+
       - name: 检查 JavaScript 语法
-        run: git ls-files -z '*.js' | xargs -0 -r -n 1 node --check
+        run: git ls-files -z '*.js' '*.mjs' ':!:vendor/**' | xargs -0 -r -n 1 node --check
 
       - name: 运行测试
         run: pnpm run check
@@ -73,7 +84,14 @@ jobs:
           ARCHIVE: ${{ steps.metadata.outputs.archive }}
         run: |
           pnpm pack --pack-destination dist
-          tar -tzf "$ARCHIVE"
+          # 先完整保存清单，避免 grep -q 提前退出使 tar 收到 SIGPIPE。
+          tar -tzf "$ARCHIVE" > dist/package-files.txt
+          cat dist/package-files.txt
+          # 离线安装的前提：包里必须自带 vendor 依赖
+          grep -Fxq 'package/vendor/node_modules/mqtt/package.json' dist/package-files.txt \
+            || { echo "::error::安装包缺少 vendor/node_modules/mqtt"; exit 1; }
+          grep -Fxq 'package/vendor/mqtt.js' dist/package-files.txt \
+            || { echo "::error::安装包缺少 vendor/mqtt.js"; exit 1; }
 
       - name: 保存工作流产物
         uses: actions/upload-artifact@v4

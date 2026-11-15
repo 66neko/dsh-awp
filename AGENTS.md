@@ -55,11 +55,17 @@ test/       node:test 单元测试。
 ## 开发命令
 
 ```
-pnpm install      安装依赖
+pnpm install      安装依赖（含 devDependencies：mqtt / react / react-dom）
+pnpm run vendor   把 mqtt 及其传递依赖复制到 vendor/（离线安装用，必须提交）
 pnpm test         运行单元测试（node --test）
 pnpm run check    语法检查 + 测试
-pnpm pack         打包成 dsh-awp-<版本>.tgz
+pnpm pack         打包成 dsh-awp-<版本>.tgz（需先跑 pnpm run vendor）
+pnpm run pack:offline  先 vendor 再打包
 ```
+
+> `vendor/` 里的第三方代码必须保持可用：`package.json` 不声明 `dependencies`，
+> 安装 `.tgz` 时不应访问 npm 源。改动 mqtt 版本后要重新 `pnpm run vendor` 并在
+> 打包后核对 `vendor/node_modules/mqtt/package.json` 的版本。
 
 本地联调：用 `node bin/awp-cli.js serve` 起一个假节点，再用 `node bin/awp-cli.js send` 给 DSH 发任务。具体参数见 `node bin/awp-cli.js --help`。
 

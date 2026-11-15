@@ -1,6 +1,6 @@
 {
   "name": "dsh-awp",
-  "version": "0.2.2",
+  "version": "0.3.0",
   "description": "让多个 AI Agent 互相指派任务的 DeepSeek Harness 插件 | Agent Work Protocol (AWP) plugin for DeepSeek Harness",
   "keywords": [
     "deepseek-harness",
@@ -26,6 +26,8 @@
     "cordis.patch.yml",
     "src/",
     "bin/",
+    "scripts/",
+    "vendor/",
     "locale/",
     "icon.svg",
     "docs/",
@@ -38,13 +40,13 @@
     "awp-cli": "./bin/awp-cli.js"
   },
   "scripts": {
+    "vendor": "node scripts/vendor-deps.mjs",
     "test": "node --test test/*.test.js",
-    "check": "node --test test/*.test.js"
-  },
-  "dependencies": {
-    "mqtt": "^5.11.0"
+    "check": "node --test test/*.test.js",
+    "pack:offline": "node scripts/vendor-deps.mjs && pnpm pack"
   },
   "devDependencies": {
+    "mqtt": "^5.16.1",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },

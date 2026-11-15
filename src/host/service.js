@@ -1,9 +1,10 @@
-﻿/**
+/**
  * AWP 服务：组装所有组件、管理启停、处理配置变更。
  * @module dsh-awp/host/service
  */
 
 import { join } from 'node:path'
+import { readFileSync } from 'node:fs'
 import { AwpNode } from '../core/node.js'
 import { makeEnvelope } from '../core/frame.js'
 import { HttpTransport } from '../core/http-transport.js'
@@ -19,7 +20,7 @@ import { registerTools } from './tools.js'
 import { registerRpc } from './rpc.js'
 
 /** 插件版本，出现在 pong 响应里。 */
-const PLUGIN_VERSION = '0.2.2'
+const PLUGIN_VERSION = '0.3.0'
 
 /**
  * 网络层签名：只有这些字段变化才需要重建监听与连接。
@@ -33,7 +34,15 @@ export function networkSignature(config) {
     transport: config.transport,
     http: config.transport === 'http' ? config.http : null,
     mqtt: config.transport === 'mqtt'
-      ? { url: config.mqtt?.url, topic: config.mqtt?.topic, username: config.mqtt?.username }
+      ? {
+        url: config.mqtt?.url,
+        topic: config.mqtt?.topic,
+        username: config.mqtt?.username,
+        caFile: config.mqtt?.caFile ?? '',
+        caPem: config.mqtt?.caPem ?? '',
+        servername: config.mqtt?.servername ?? '',
+        allowInvalidCert: config.mqtt?.allowInvalidCert === true,
+      }
       : null,
     peers: (config.peers ?? []).map((peer) => [peer.id, peer.url ?? '']),
   })
@@ -131,13 +140,22 @@ export class AwpService {
       this.#log('warn', this.startError)
       return
     }
+    // 传输层构造可能因为 CA 证书读不到而失败：转成启动错误，不能让异常冒泡。
+    let transport
+    try {
+      transport = this.#createTransport(config)
+    } catch (error) {
+      this.startError = error?.message ?? String(error)
+      this.#log('error', `传输层初始化失败：${this.startError}`)
+      return
+    }
     // 保持 node/worker/delegator 对象标识不变：工具与委派方持有它们的引用，
     // 重建对象会让工具指向已停止的旧节点。
     if (!this.node) {
       this.node = new AwpNode({
         nodeId: config.nodeId,
         secret,
-        transport: this.#createTransport(config),
+        transport,
         peers: this.#peerMap(config),
         log: this.#log.bind(this),
       })
@@ -159,7 +177,7 @@ export class AwpService {
       this.node.nodeId = config.nodeId
       this.node.secret = secret
       this.node.peers = this.#peerMap(config)
-      this.node.transport = this.#createTransport(config)
+      this.node.transport = transport
       this.worker.config = config.worker
     }
     try {
@@ -214,23 +232,51 @@ export class AwpService {
    * 按配置创建传输层。
    * @param {object} config - 已校验的配置。
    * @returns {object} HttpTransport 或 MqttTransport。
+   * @throws {Error} MQTT 且 CA 证书文件不可读时抛出，由调用方转成启动错误。
    */
   #createTransport(config) {
-    return config.transport === 'http'
-      ? new HttpTransport({
+    if (config.transport === 'http') {
+      return new HttpTransport({
         nodeId: config.nodeId,
         host: config.http.host,
         port: config.http.port,
         maxBodyBytes: config.http.maxBodyBytes,
       })
-      : new MqttTransport({
-        nodeId: config.nodeId,
-        url: config.mqtt.url,
-        topic: config.mqtt.topic,
-        username: config.mqtt.username,
-        password: this.mqttPassword,
-        log: this.#log.bind(this),
-      })
+    }
+    const mqtt = config.mqtt ?? {}
+    return new MqttTransport({
+      nodeId: config.nodeId,
+      url: mqtt.url,
+      topic: mqtt.topic,
+      username: mqtt.username,
+      password: this.mqttPassword,
+      ca: this.#readCaCertificate(mqtt),
+      servername: mqtt.servername || undefined,
+      rejectUnauthorized: mqtt.allowInvalidCert !== true,
+      log: this.#log.bind(this),
+    })
+  }
+
+  /**
+   * 读取自定义 CA 证书内容。
+   * @param {object} mqtt - MQTT 配置。
+   * @returns {string | undefined} PEM 内容；未配置时返回 undefined。
+   * @throws {Error} 指定了文件但读不到时抛出。
+   */
+  #readCaCertificate(mqtt) {
+    const pem = typeof mqtt.caPem === 'string' ? mqtt.caPem.trim() : ''
+    if (pem) return pem
+    const file = typeof mqtt.caFile === 'string' ? mqtt.caFile.trim() : ''
+    if (!file) return undefined
+    try {
+      const content = readFileSync(file, 'utf8')
+      if (!content.includes('BEGIN CERTIFICATE')) {
+        throw new Error('文件里没有 PEM 证书内容')
+      }
+      return content
+    } catch (error) {
+      throw new Error(`无法读取 CA 证书文件 ${file}：${error?.message ?? error}`)
+    }
   }
 
   /**

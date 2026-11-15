@@ -7,11 +7,10 @@ settings:
 importers:
 
   .:
-    dependencies:
-      mqtt:
-        specifier: ^5.11.0
-        version: 5.16.1
     devDependencies:
+      mqtt:
+        specifier: ^5.16.1
+        version: 5.16.1
       react:
         specifier: ^18.3.1
         version: 18.3.1

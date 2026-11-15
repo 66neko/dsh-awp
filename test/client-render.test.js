@@ -1,4 +1,4 @@
-/**
+﻿/**
  * client.js 渲染测试。
  *
  * 设置页白屏过一次，原因是没有验证真实渲染。这里用真实的 React 服务端渲染
@@ -7,14 +7,52 @@
 
 import { describe, it } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync } from 'node:fs'
+import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
-import React from 'react'
-import { renderToStaticMarkup } from 'react-dom/server'
+import { tmpdir } from 'node:os'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const clientSource = readFileSync(join(here, '..', 'client.js'), 'utf8')
+const root = join(here, '..')
+const clientSource = readFileSync(join(root, 'client.js'), 'utf8')
+
+/**
+ * 把 react / react-dom 复制成扁平的 node_modules，供测试渲染使用。
+ *
+ * 不直接用仓库的 node_modules：pnpm 的软链在受限 ACL 环境里可能不可 stat
+ * （ERR_INVALID_PACKAGE_CONFIG / EACCES），复制真实目录可以绕开这个限制。
+ * @returns {string | null} 依赖根目录；失败时返回 null。
+ */
+function materializeRenderDeps() {
+  try {
+    const store = join(root, 'node_modules', '.pnpm')
+    const target = join(tmpdir(), 'awp-render-deps', 'node_modules')
+    const specs = { react: 'react', 'react-dom': 'react-dom' }
+    for (const [name, prefix] of Object.entries(specs)) {
+      const entry = readdirSync(store).find((dir) => dir.startsWith(`${prefix}@`))
+      if (!entry) return null
+      const source = join(store, entry, 'node_modules', name)
+      if (!existsSync(join(source, 'package.json'))) return null
+      const destination = join(target, name)
+      if (!existsSync(join(destination, 'package.json'))) {
+        mkdirSync(target, { recursive: true })
+        cpSync(source, destination, { recursive: true, force: true })
+      }
+    }
+    return target
+  } catch {
+    return null
+  }
+}
+
+const depsRoot = materializeRenderDeps()
+const skipReason = depsRoot ? false : '无法从 pnpm store 准备 react 渲染依赖'
+const loadDep = depsRoot
+  ? createRequire(join(depsRoot, 'anchor.cjs'))
+  : null
+const React = depsRoot ? loadDep('react') : null
+const renderToStaticMarkup = depsRoot ? loadDep('react-dom/server').renderToStaticMarkup : null
 
 /**
  * 取出 client.js 注册的插件对象。
@@ -84,7 +122,7 @@ function makeState() {
       nodeId: 'local-test',
       transport: 'http',
       http: { host: '127.0.0.1', port: 7820, maxBodyBytes: 1048576 },
-      mqtt: { url: '', topic: '', username: '' },
+      mqtt: { url: '', topic: '', username: '', caFile: '', caPem: '', servername: '', allowInvalidCert: false },
       peers: [{ id: 'local-test', url: 'http://127.0.0.1:7820', description: '' }],
       worker: {
         enabled: true,
@@ -127,7 +165,7 @@ async function renderSettings({ state = makeState(), loaded = false, call } = {}
     // 组件里 useState 的出现顺序：state, draft, loading, saving, error,
     // hostErrors, feedback, secretForm, peerForm, catalog, presets
     useState: loaded
-      ? [state, state.config, false, false, '', [], '', null, null, { groups: [] }, [],
+      ? [state, state.config, false, false, '', [], '', null, null, null, { groups: [] }, [],
         [{ id: 'ws-1', title: '测试工作区', path: 'E:\\workspace\\dsh-test' }]]
       : undefined,
     get: (name) => {
@@ -149,7 +187,7 @@ async function renderSettings({ state = makeState(), loaded = false, call } = {}
   return renderToStaticMarkup(element)
 }
 
-describe('client 渲染', () => {
+describe('client 渲染', { skip: skipReason }, () => {
   it('首帧（未加载）不抛异常', async () => {
     const html = await renderSettings()
     assert.equal(typeof html, 'string')
@@ -168,5 +206,21 @@ describe('client 渲染', () => {
     assert.ok(html.includes('绑定工作区'), '缺少「绑定工作区」行')
     assert.ok(html.includes('测试工作区 — E:\\workspace\\dsh-test'), '工作区下拉缺少已绑定项')
     assert.ok(!html.includes('选择…'), '不应再出现目录选择按钮')
+  })
+
+  it('MQTT 展示证书设置，关闭校验时显示风险提示', async () => {
+    const state = makeState()
+    state.config.transport = 'mqtt'
+    state.config.mqtt.url = 'mqtts://broker.example.com:8883'
+    state.config.mqtt.topic = 'awp/test'
+    const verified = await renderSettings({ loaded: true, state })
+    for (const title of ['CA 证书文件', '或粘贴证书', '证书主机名', '跳过证书校验']) {
+      assert.ok(verified.includes(title), `缺少 MQTT TLS 设置：${title}`)
+    }
+    assert.ok(!verified.includes('已关闭 TLS 证书校验'))
+
+    state.config.mqtt.allowInvalidCert = true
+    const unverified = await renderSettings({ loaded: true, state })
+    assert.ok(unverified.includes('已关闭 TLS 证书校验'))
   })
 })

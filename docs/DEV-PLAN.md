@@ -70,7 +70,7 @@ dsh-awp/
     DEV-PLAN.md
 ```
 
-依赖只有 `mqtt`（MIT）。HTTP 用 Node 内置模块。
+依赖：运行时依赖 `mqtt` **打包进 `vendor/`**（由 `pnpm run vendor` 从安装结果复制成扁平的 `vendor/node_modules/`），因此 `package.json` 没有 `dependencies`，安装 `.tgz` 时不需要访问 npm 源。HTTP 用 Node 内置模块。
 
 ## 5. 配置
 
@@ -198,7 +198,7 @@ pnpm test             # 单元测试
 pnpm pack             # 生成 dsh-awp-<版本>.tgz
 ```
 
-安装：DSH「设置 → 插件 → 添加插件」，输入 `.tgz` 的**绝对路径**。DSH 的插件管理器会用 pnpm 安装它和 `mqtt` 依赖（需要能访问 npm 源）。
+安装：DSH「设置 → 插件 → 添加插件」，输入 `.tgz` 的**绝对路径**。插件包自带 `vendor/` 中的 MQTT 运行依赖，安装时无需访问 npm 源。开发依赖变更后需重新生成并提交 vendor；CI 会重新生成并核对仓库内容。
 
 `package.json` 的 `files` 列出全部运行时文件，打包后用 `tar -tzf` 核对清单。
 
