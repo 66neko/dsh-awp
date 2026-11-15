@@ -127,6 +127,8 @@ pnpm pack          打包成 dsh-awp-<版本>.tgz
 
 ### 发布插件
 
+每次交付项目改动时默认发布一版 Release，完整交付要求见 [AGENTS.md](AGENTS.md#发布-release)。
+
 1. 更新 `package.json` 的 `version`，提交并推送到 GitHub。
 2. 在 [GitHub Releases](https://github.com/66neko/dsh-awp/releases/new) 创建 Release，标签使用对应版本（例如版本 `0.2.3` 使用标签 `v0.2.3`），并选择包含上述修改的提交。
 3. 点击发布后，GitHub Actions 会检出该标签，使用 Node.js 24 安装锁定的依赖，检查语法、运行测试，再执行 `pnpm pack`。成功后，`dsh-awp-<版本>.tgz` 会自动出现在该 Release 的 Assets 中，可直接下载并安装到 DSH。

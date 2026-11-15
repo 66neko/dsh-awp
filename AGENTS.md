@@ -70,3 +70,38 @@ pnpm pack         打包成 dsh-awp-<版本>.tgz
 3. 新增文件时更新 `package.json` 的 `files`，打包后用 `tar -tzf dsh-awp-*.tgz` 核对。
 4. 涉及界面的改动，在 DSH 亮色和暗色主题下各看一次。
 5. 更新 README 中受影响的说明。
+6. 按下方「发布 Release」完成提交、推送、发布与附件验证，确认用户可以下载本次改动对应的插件包后再交付。
+
+## 发布 Release
+
+**每次完成并交付项目改动时，默认必须发布一版 GitHub Release，除非用户明确要求本次暂不发布。** 这适用于代码、配置和文档改动；只提交或推送代码不算完成交付。执行发布前先完成本文件要求的检查，不要再为已授权的发布重复请求确认。
+
+### 版本与发布准备
+
+1. 用 `gh release list` 和 `git tag` 检查已有版本。标签统一使用 `v<版本>`，且必须与待发布提交中 `package.json` 的 `version` 一致。
+2. 首次发布可直接使用当前包版本；已有同版本 Release 或标签时，先递增版本，默认递增补丁号（用户指定版本时按用户要求）。不要移动已有标签或用新代码覆盖已发布版本。
+3. 在 Node.js 24 下安装锁定依赖、检查 JavaScript 语法并运行 `pnpm run check`；执行 `pnpm pack`，再用 `tar -tzf` 核对安装包内容。打包产物和本机运行数据不得提交到 Git。
+4. 更新受影响的文档，准备中文发布说明，写清本版变化与验证结果。只提交本次任务相关的改动，并推送到 GitHub；记录已推送提交的完整 SHA。
+
+### 创建 Release
+
+使用 `gh` 发布正式版并标记为最新版本；只有用户明确要求时才发布预发布版。标签不存在时由 GitHub 从指定提交创建，确保 Release 包含本次修改：
+
+```sh
+task_release_tag="v$(node -p "JSON.parse(require('node:fs').readFileSync('package.json', 'utf8')).version")"
+task_release_commit=$(git rev-parse HEAD)
+# 先将中文发布说明写入临时文件，再传入其绝对路径。
+gh release create "$task_release_tag" \
+  --target "$task_release_commit" \
+  --title "$task_release_tag" \
+  --notes-file /tmp/dsh-awp-release-notes.md \
+  --latest
+```
+
+### 确认自动打包成功
+
+1. 发布会触发 `.github/workflows/release.yml` 的 `release.published` 事件。工作流使用 Node.js 24 安装锁定依赖、校验版本、检查语法、运行测试和打包，再自动上传 `dsh-awp-<版本>.tgz` 到该 Release 的 Assets，无需额外密钥。
+2. 用 `gh run list --workflow release.yml --event release` 找到本次标签和提交对应的运行，再用 `gh run watch <run-id> --exit-status` 等待完成。
+3. 用 `gh release view <标签> --json url,tagName,assets` 确认正式附件 `dsh-awp-<版本>.tgz` 存在，不能只确认 Actions 中有临时产物。
+4. 工作流失败时查看日志并处理，不能把失败的打包当作发布完成；需要为已有 Release 补传附件时，可执行 `gh workflow run release.yml --ref main -f tag=<标签>`，它会检出该标签并重新检查、打包、上传。
+5. 最终回复给出 Release 页面和插件包下载链接，并说明检查结果。
