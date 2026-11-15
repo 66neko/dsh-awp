@@ -1,0 +1,6 @@
+{
+  "awp": {
+    "title": "dsh-awp",
+    "description": "Configure AWP (Agent Work Protocol) node for multi-agent task delegation"
+  }
+}

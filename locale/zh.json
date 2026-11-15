@@ -1,0 +1,6 @@
+{
+  "awp": {
+    "title": "dsh-awp",
+    "description": "配置 AWP（Agent Work Protocol）节点，让多个 DSH 互相指派任务"
+  }
+}

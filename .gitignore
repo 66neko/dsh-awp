@@ -1,0 +1,96 @@
+# dsh-awp 的 Git 忽略规则
+#
+# 原则：
+# 1. 只提交源码、测试、文档与插件元数据（package.json / cordis.patch.yml / locale / icon.svg）。
+# 2. 绝不提交依赖、打包产物、凭据、本机运行数据。
+
+# ---------- 依赖与包管理器 ----------
+node_modules/
+.pnpm-store/
+.pnpm-debug.log*
+pnpm-workspace-state.json
+.modules.yaml
+
+# ---------- 打包产物 ----------
+# pnpm pack / npm pack 生成的可安装包
+*.tgz
+*.tar.gz
+*.zip
+# 解包检查用的临时目录
+package/
+
+# ---------- 插件运行时数据 ----------
+# 插件把配置与任务表写到 $DSH_HOME/dsh-awp/；若有人把 DSH_HOME 指进仓库，
+# 这些文件会出现在这里，属于本机状态，不应提交。
+dsh-awp/
+.dsh/
+config.json
+tasks.json
+# DSH 凭据库：可能包含共享密钥与 MQTT 密码
+.credentials.yaml
+.credentials.yml
+
+# ---------- 密钥与环境变量 ----------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.json
+
+# ---------- 测试与覆盖率 ----------
+coverage/
+.nyc_output/
+test-data/
+test/fixtures/tmp/
+*.lcov
+junit.xml
+*.tap
+
+# ---------- 日志与临时文件 ----------
+*.log
+logs/
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+*.stackdump
+*.bak
+*.orig
+*.rej
+*.save
+# 手工编辑前留的备份
+package.json.*.bak
+pnpm-lock.yaml.*.bak
+
+# ---------- 编辑器与 IDE ----------
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.iml
+*.code-workspace
+.history/
+.fleet/
+
+# ---------- 操作系统 ----------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# ---------- 构建缓存 ----------
+.cache/
+.eslintcache
+.stylelintcache
+*.tsbuildinfo
+.npm/
+.yarn/

@@ -1,0 +1,72 @@
+{
+  "name": "dsh-awp",
+  "version": "0.2.2",
+  "description": "让多个 AI Agent 互相指派任务的 DeepSeek Harness 插件 | Agent Work Protocol (AWP) plugin for DeepSeek Harness",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "agent",
+    "collaboration",
+    "distributed",
+    "awp"
+  ],
+  "author": "DSH AWP Contributors",
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "src/",
+    "bin/",
+    "locale/",
+    "icon.svg",
+    "docs/",
+    "README.md",
+    "LICENSE",
+    "AGENTS.md"
+  ],
+  "bin": {
+    "awp-cli": "./bin/awp-cli.js"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "check": "node --test test/*.test.js"
+  },
+  "dependencies": {
+    "mqtt": "^5.11.0"
+  },
+  "devDependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "engines": {
+    "node": ">=22.0.0",
+    "dsh": ">=0.2.0"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-locale"
+      ]
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/66neko/dsh-awp.git"
+  }
+}
