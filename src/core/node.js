@@ -13,9 +13,13 @@
 
 import { decodeFrame, encodeFrame, makeEnvelope, newId, validateEnvelope, AwpError } from './frame.js'
 import { DedupeCache } from './dedupe.js'
+import { setTimeout as wait } from 'node:timers/promises'
 
 /** AWP 节点。 */
 export class AwpNode {
+  /** 当前运行周期的取消信号，用于终止请求的重试等待。 */
+  #requests = new AbortController()
+
   /**
    * @param {object} options - 节点选项。
    * @param {string} options.nodeId - 本节点 ID。
@@ -35,7 +39,7 @@ export class AwpNode {
     this.dedupe = new DedupeCache()
     /** @type {Map<string, { frame: string, at: number }>} 去重键 → 已发出的回复帧（供重试重放）。 */
     this.replies = new Map()
-    /** @type {Map<string, (reply: object) => void>} 请求 id → 回复处理器。 */
+    /** @type {Map<string, { promise: Promise<object>, resolve: (reply: object) => void, reject: (error: Error) => void, cancel: () => void }>} 请求 id → 等待中的回复。 */
     this.pending = new Map()
     /** @type {((envelope: object) => Promise<void>) | null} 上层消息处理器。 */
     this.onMessage = null
@@ -44,14 +48,37 @@ export class AwpNode {
 
   /**
    * 启动节点。
-   * @param {(envelope: object) => Promise<void>} onMessage - 收到非回复消息时调用。
+   *
+   * 传输层只有在**成功启动后**才会安装到节点上；启动失败会回滚 `started`
+   * 并清理传输层。这样不会留下「node 已启动、但 node.transport 是从未启动的
+   * 实例」的半启动状态——那种状态下所有发送都会报 `MQTT 未连接`，而 UI 仍显示运行中。
+   * @param {(envelope: object) => Promise<object | null>} onMessage - 收到非回复消息时调用。
+   * @param {object} [transport] - 本次使用的传输层；省略时沿用构造时的实例。
    * @returns {Promise<object>} 传输层返回的地址信息。
+   * @throws {Error} 节点已启动或传输层启动失败。
    */
-  async start(onMessage) {
+  async start(onMessage, transport = this.transport) {
     if (this.started) throw new Error('Node already started')
+    if (!transport || typeof transport.start !== 'function') {
+      throw new AwpError('config', 'transport is not available')
+    }
+    const previousOnMessage = this.onMessage
     this.onMessage = onMessage
+    let address
+    try {
+      address = await transport.start((frame) => this.#onFrame(frame))
+    } catch (error) {
+      // start 失败必须回滚，否则后续 restart 会撞上 "Node already started"。
+      this.onMessage = previousOnMessage
+      if (typeof transport.stop === 'function') {
+        await transport.stop().catch(() => {})
+      }
+      throw error
+    }
+    this.transport = transport
+    this.#requests = new AbortController()
     this.started = true
-    return await this.transport.start((frame) => this.#onFrame(frame))
+    return address
   }
 
   /**
@@ -59,9 +86,10 @@ export class AwpNode {
    */
   async stop() {
     this.started = false
+    this.#requests.abort(new AwpError('cancelled', 'node stopped'))
     this.onMessage = null
-    for (const reject of this.pending.values()) {
-      reject(new AwpError('cancelled', 'node stopped'))
+    for (const waiter of this.pending.values()) {
+      waiter.reject(new AwpError('cancelled', 'node stopped'))
     }
     this.pending.clear()
     await this.transport.stop()
@@ -70,7 +98,8 @@ export class AwpNode {
   /**
    * 处理收到的帧。
    * @param {string} frame - 帧文本。
-   * @returns {Promise<{ reply?: string, error?: string }>} 协议错误码或回复帧。
+   * @returns {Promise<{ reply?: string, replyTo?: string, error?: string }>}
+   *   协议错误码，或回复帧及其收件人（MQTT 等无同步回复的传输层据此发布）。
    */
   async #onFrame(frame) {
     let envelope
@@ -97,13 +126,13 @@ export class AwpNode {
       // 并最终超时——对端重试时正是这条路径。
       const cached = this.replies.get(dedupeKey)
       this.log('debug', `重复消息：${envelope.id}${cached ? '（重放回复）' : ''}`)
-      return cached ? { reply: cached.frame } : {}
+      return cached ? { reply: cached.frame, replyTo: envelope.from } : {}
     }
     // 回复消息：匹配等待中的请求。
     if (envelope.re && this.pending.has(envelope.re)) {
-      const resolve = this.pending.get(envelope.re)
+      const waiter = this.pending.get(envelope.re)
       this.pending.delete(envelope.re)
-      resolve(envelope)
+      waiter.resolve(envelope)
     }
     // 所有非请求的消息（status、result、pong）都交给上层。
     // 上层返回信封表示「需要立即回复」：HTTP 走同步响应体，MQTT 由调用方另行发布。
@@ -133,7 +162,7 @@ export class AwpNode {
       }
       const frame = encodeFrame(finalized, this.secret)
       this.#rememberReply(dedupeKey, frame)
-      return { reply: frame }
+      return { reply: frame, replyTo: envelope.from }
     }
     return {}
   }
@@ -168,12 +197,36 @@ export class AwpNode {
     const peer = this.peers.get(to)
     if (!peer) throw new AwpError('unknown_peer', `peer ${to} not configured`)
     const frame = encodeFrame(envelope, this.secret)
+    const signal = this.#requests.signal
+    const transport = this.transport
     let lastError
     for (let attempt = 0; attempt <= retries; attempt++) {
+      signal.throwIfAborted()
+      // MQTT 这类异步传输必须在 publish 之前登记等待者：对端的回复可能先于
+      // send() 返回，先发布后登记会漏掉回复并误报超时。
+      let waiter = transport.syncReply === false
+        ? this.#createWaiter(envelope.id, to, timeoutMs)
+        : null
       try {
-        const outcome = await this.transport.send(peer.url ?? to, frame, { timeoutMs })
+        // 发送可能一直等不到 PUBACK；立即监听两个 Promise，超时、取消或
+        // 对端回复都不能被未完成的发送挡住。失败较晚的发送也由 race 接住。
+        const sending = Promise.resolve().then(() => {
+          signal.throwIfAborted()
+          return transport.send(peer.url ?? to, frame, { timeoutMs })
+        })
+        const completed = waiter
+          ? await Promise.race([
+            sending.then((outcome) => ({ outcome })),
+            waiter.promise.then((reply) => ({ reply })),
+          ])
+          : { outcome: await sending }
+        signal.throwIfAborted()
+        if (completed.reply) return completed.reply
+        const { outcome } = completed
         // HTTP 同步回复。
         if (outcome.reply) {
+          waiter?.cancel()
+          waiter = null
           const reply = decodeFrame(outcome.reply, { secret: this.secret, windowMs: this.windowMs })
           if (reply.from !== to || reply.to !== this.nodeId) {
             throw new AwpError('bad_frame', 'reply from/to mismatch')
@@ -181,27 +234,67 @@ export class AwpNode {
           return reply
         }
         // MQTT / HTTP 204：等待异步回复。
-        return await new Promise((resolve, reject) => {
-          this.pending.set(envelope.id, resolve)
-          setTimeout(() => {
-            if (this.pending.delete(envelope.id)) {
-              reject(new AwpError('timeout', `no reply from ${to} within ${timeoutMs}ms`))
-            }
-          }, timeoutMs)
-        })
+        waiter ??= this.#createWaiter(envelope.id, to, timeoutMs)
+        return await waiter.promise
       } catch (error) {
+        waiter?.cancel()
         lastError = error
-        if (error instanceof AwpError && ['bad_sig', 'expired', 'unknown_peer'].includes(error.code)) {
+        // 这些错误重试也不会成功；cancelled 表示节点正在停止，重试只会拖住关闭流程。
+        if (error instanceof AwpError && ['bad_sig', 'expired', 'unknown_peer', 'cancelled'].includes(error.code)) {
           throw error
         }
         if (attempt < retries) {
           const delay = Math.min(2000 * 2 ** attempt, 30_000)
           this.log('debug', `请求失败，${delay}ms 后重试：${error?.message ?? error}`)
-          await new Promise((r) => setTimeout(r, delay))
+          try {
+            await wait(delay, undefined, { signal })
+          } catch (error) {
+            throw signal.aborted ? signal.reason : error
+          }
         }
+      } finally {
+        waiter?.cancel()
       }
     }
     throw lastError
+  }
+
+  /**
+   * 登记一个等待回复的请求。
+   * @param {string} id - 消息 id。
+   * @param {string} to - 对端节点 ID，仅用于超时说明。
+   * @param {number} timeoutMs - 超时毫秒数。
+   * @returns {{ promise: Promise<object>, resolve: (reply: object) => void, reject: (error: Error) => void, cancel: () => void }}
+   *   等待句柄；`cancel()` 用于已经拿到同步回复或发送失败时清理。
+   */
+  #createWaiter(id, to, timeoutMs) {
+    let timer
+    const waiter = {
+      promise: null,
+      resolve: () => {},
+      reject: () => {},
+      cancel: () => {},
+    }
+    const cleanup = () => {
+      if (this.pending.get(id) === waiter) this.pending.delete(id)
+      if (timer !== undefined) clearTimeout(timer)
+    }
+    waiter.promise = new Promise((resolve, reject) => {
+      waiter.resolve = (reply) => {
+        cleanup()
+        resolve(reply)
+      }
+      waiter.reject = (error) => {
+        cleanup()
+        reject(error)
+      }
+    })
+    waiter.cancel = cleanup
+    this.pending.set(id, waiter)
+    timer = setTimeout(() => {
+      waiter.reject(new AwpError('timeout', `no reply from ${to} within ${timeoutMs}ms`))
+    }, timeoutMs)
+    return waiter
   }
 
   /**

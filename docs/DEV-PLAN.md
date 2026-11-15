@@ -142,6 +142,8 @@ dsh-awp/
 - 执行方绑定的工作区不存在时，执行方不接任务（`not_worker`），设置页显示原因。
 - 配置文件不存在时使用默认配置（只监听 `127.0.0.1`，执行方关闭），不自动写文件。
 
+MQTT 依赖加载、连接与订阅共享 15 秒启动上限；卸载先取消在途启动，再等待配置队列收尾。异步请求同时等待发送和回复，超时与取消不依赖 broker 的 PUBACK，停止节点也会中断重试退避。
+
 ## 6. 执行方流程
 
 全部使用 dsh-im 已验证过的路径：通过 `ctx.typertGateway.invoke()` 调用 `session` Remote 命名空间，调用身份是 `ctx.connection.createPeer({ principal: { kind: 'owner' }, interactions: 'none' })` 创建的进程内 Peer。

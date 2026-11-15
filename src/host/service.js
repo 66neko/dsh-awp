@@ -20,7 +20,7 @@ import { registerTools } from './tools.js'
 import { registerRpc } from './rpc.js'
 
 /** 插件版本，出现在 pong 响应里。 */
-const PLUGIN_VERSION = '0.3.0'
+const PLUGIN_VERSION = '0.3.1'
 
 /**
  * 网络层签名：只有这些字段变化才需要重建监听与连接。
@@ -50,6 +50,15 @@ export function networkSignature(config) {
 
 /** AWP 服务。 */
 export class AwpService {
+  /** @type {Promise<void>} 配置保存与重启的串行队列。 */
+  #queue = Promise.resolve()
+
+  /** @type {boolean} 服务是否已停止，停止后拒绝新的配置操作。 */
+  #closed = false
+
+  /** 正在启动的传输层；尚未安装到 node 上时也必须能被卸载取消。 */
+  #startingTransport = null
+
   /**
    * @param {object} ctx - Cordis 上下文。
    */
@@ -70,33 +79,60 @@ export class AwpService {
     this.delegatorStarted = false
   }
 
-  /** 启动服务。先注册设置页路由，保证配置写错时页面仍能打开修正。 */
+  /**
+   * 启动服务。先注册设置页路由，保证配置写错时页面仍能打开修正。
+   *
+   * 启动过程与后续的配置保存走同一个串行队列：页面在启动尚未完成时保存配置，
+   * 也不会和首次启动交错执行。
+   */
   async start() {
     this.#registerRpc()
-    await this.taskStore.load()
-    const loaded = await this.configStore.load()
-    const config = loaded.config
-    let errors = loaded.errors
-    this.config = config
-    // 旧配置用的是裸目录路径：能按路径匹配到已有工作区就自动迁移，避免用户手动重配。
-    if (config.worker?.enabled && !config.worker.workspaceId && typeof config.worker.workspace === 'string' && config.worker.workspace) {
-      const migrated = await this.#workspaceIdForPath(config.worker.workspace)
-      if (migrated) {
-        config.worker.workspaceId = migrated
-        delete config.worker.workspace
-        errors = validateConfig(config).errors
-        await this.configStore.save(config).catch(() => {})
-        this.#log('info', `已把执行方目录迁移为工作区：${migrated}`)
+    await this.#enqueue(async () => {
+      await this.taskStore.load()
+      const loaded = await this.configStore.load()
+      const config = loaded.config
+      let errors = loaded.errors
+      this.config = config
+      // 旧配置用的是裸目录路径：能按路径匹配到已有工作区就自动迁移，避免用户手动重配。
+      if (config.worker?.enabled && !config.worker.workspaceId && typeof config.worker.workspace === 'string' && config.worker.workspace) {
+        const migrated = await this.#workspaceIdForPath(config.worker.workspace)
+        if (migrated) {
+          config.worker.workspaceId = migrated
+          delete config.worker.workspace
+          errors = validateConfig(config).errors
+          await this.configStore.save(config).catch(() => {})
+          this.#log('info', `已把执行方目录迁移为工作区：${migrated}`)
+        }
       }
-    }
-    if (errors.length > 0) {
-      this.startError = errors.join('; ')
-      this.#log('warn', `配置错误：${this.startError}`)
-      return
-    }
-    await this.#loadSecrets()
-    await this.#startNode()
-    this.#registerTools()
+      if (errors.length > 0) {
+        this.startError = errors.join('; ')
+        this.#log('warn', `配置错误：${this.startError}`)
+        return
+      }
+      await this.#loadSecrets()
+      await this.#startNode(config, this.secret)
+      if (!this.#closed) this.#registerTools()
+    })
+  }
+
+  /**
+   * 把一个配置操作排进串行队列。
+   *
+   * 两次保存若各自触发一次重启，交错执行会出现「后一次 restart 撞上
+   * Node already started，把前一次成功的连接留下但状态被覆盖」的僵死状态。
+   * @param {() => Promise<T>} task - 要串行执行的操作。
+   * @returns {Promise<T>} 操作的返回值。
+   * @template T
+   */
+  #enqueue(task) {
+    if (this.#closed) return Promise.reject(new Error('AWP 服务已停止'))
+    const result = this.#queue.then(() => {
+      if (this.#closed) throw new Error('AWP 服务已停止')
+      return task()
+    })
+    // 队列自身必须吞掉失败，否则一次保存失败会让后续所有保存都无法执行。
+    this.#queue = result.then(() => {}, () => {})
+    return result
   }
 
   /**
@@ -132,9 +168,17 @@ export class AwpService {
     if (!this.mqttPassword) this.mqttPassword = process.env.DSH_AWP_MQTT_PASSWORD ?? null
   }
 
-  /** 启动（或按新配置重启）网络节点。 */
-  async #startNode() {
-    const { config, secret } = this
+  /**
+   * 启动（或按新配置重启）网络节点。
+   *
+   * 使用调用方传入的配置，而不是可变的 `this.config`：重启过程中若有另一份
+   * 配置写入 `this.config`，旧实现会拿新配置去启动旧流程，造成 transport 与
+   * nodeId/peers 不一致。
+   * @param {object} config - 本次要应用的配置。
+   * @param {string | null} secret - 与该配置配套的共享密钥。
+   */
+  async #startNode(config, secret) {
+    if (!config || this.#closed) return
     if (requiresSecret(config) && !secret) {
       this.startError = '监听所有网卡或使用 MQTT 时必须配置共享密钥'
       this.#log('warn', this.startError)
@@ -177,11 +221,17 @@ export class AwpService {
       this.node.nodeId = config.nodeId
       this.node.secret = secret
       this.node.peers = this.#peerMap(config)
-      this.node.transport = transport
       this.worker.config = config.worker
     }
     try {
-      await this.node.start((envelope) => this.#handleIncoming(envelope))
+      this.#startingTransport = transport
+      // transport 由 AwpNode.start 在启动成功后安装；失败时节点回滚为未启动，
+      // 不会出现「node.started = true 但 transport.client = null」。
+      await this.node.start((envelope) => this.#handleIncoming(envelope), transport)
+      if (this.#closed) {
+        await this.node.stop()
+        return
+      }
       if (!this.workerStarted) {
         this.worker.start()
         this.workerStarted = true
@@ -195,6 +245,8 @@ export class AwpService {
     } catch (error) {
       this.startError = error.message
       this.#log('error', `启动失败：${error.message}`)
+    } finally {
+      if (this.#startingTransport === transport) this.#startingTransport = null
     }
   }
 
@@ -211,7 +263,7 @@ export class AwpService {
       // 重试又撞上去重缓存拿到 204，最终表现为「探测超时」。
       return makeEnvelope({
         type: 'pong',
-        from: config.nodeId,
+        from: this.node?.nodeId ?? config.nodeId,
         to: envelope.from,
         re: envelope.id,
         body: {
@@ -326,7 +378,9 @@ export class AwpService {
       config: this.config ?? defaultConfig(),
       secretSet: !!this.secret,
       mqttPasswordSet: !!this.mqttPassword,
-      running: !!this.node && !this.startError,
+      // 以节点自身的启动状态为准：startError 可能被后续操作清掉，
+      // 但 node.started 为 false 时所有发送都必然失败，不能显示为运行中。
+      running: this.node?.started === true && !this.startError,
       error: this.startError,
     }
   }
@@ -337,11 +391,13 @@ export class AwpService {
    * @returns {Promise<{ ok: boolean, errors?: string[] }>} 结果。
    */
   async #saveConfig(newConfig) {
-    const { config, errors } = validateConfig(newConfig)
-    if (errors.length > 0) return { ok: false, errors }
-    await this.configStore.save(config)
-    await this.applyConfig(config)
-    return { ok: true }
+    return await this.#enqueue(async () => {
+      const { config, errors } = validateConfig(newConfig)
+      if (errors.length > 0) return { ok: false, errors }
+      await this.configStore.save(config)
+      await this.#applyConfigNow(config)
+      return { ok: true }
+    })
   }
 
   /**
@@ -350,11 +406,23 @@ export class AwpService {
    * 只有网络相关字段变化才重建节点（监听端口、对端、传输方式）；
    * 执行方参数直接更新到运行中的对象，避免每改一个字段就抢一次端口。
    * @param {object} config - 已校验的配置。
+   * @returns {Promise<void>}
    */
   async applyConfig(config) {
+    await this.#enqueue(() => this.#applyConfigNow(config))
+  }
+
+  /**
+   * 应用配置的实际逻辑，只允许在串行队列内调用。
+   * @param {object} config - 已校验的配置。
+   * @returns {Promise<void>}
+   */
+  async #applyConfigNow(config) {
     const previous = this.config
     this.config = config
-    if (!this.node || networkSignature(previous) !== networkSignature(config)) {
+    // 节点未真正运行时也必须走重启：否则一次启动失败后，再保存一个只改执行方
+    // 参数的配置会把 startError 清成 null，留下「显示已停止但没有原因、发送必失败」的状态。
+    if (!this.node || this.node.started !== true || networkSignature(previous) !== networkSignature(config)) {
       await this.restart(config)
       return
     }
@@ -482,6 +550,9 @@ export class AwpService {
 
   /**
    * 按新配置重建网络节点，保持 node/worker/delegator 对象标识。
+   *
+   * 调用方必须已经持有串行队列（`applyConfig` / `#saveConfig` 内部），
+   * 不要在队列外直接调用，否则仍可能与另一次重启交错。
    * @param {object} [newConfig] - 新配置；省略时沿用当前配置。
    */
   async restart(newConfig) {
@@ -489,7 +560,7 @@ export class AwpService {
     if (newConfig) this.config = newConfig
     this.startError = null
     await this.#loadSecrets()
-    await this.#startNode()
+    await this.#startNode(this.config, this.secret)
   }
 
   /** 只停网络层，保留 worker/delegator 对象与其工具注册。 */
@@ -504,6 +575,11 @@ export class AwpService {
 
   /** 停止全部组件并释放引用，用于插件卸载。 */
   async stop() {
+    // 先取消启动，再等待队列收尾；否则队列可能一直等不到 MQTT 的 SUBACK，
+    // 而 stop 又一直等队列，连传输层自身的停止超时都无法触发。
+    this.#closed = true
+    if (this.#startingTransport) await this.#startingTransport.stop().catch(() => {})
+    await this.#queue.catch(() => {})
     if (this.delegator) {
       this.delegator.stop()
       this.delegator = null
