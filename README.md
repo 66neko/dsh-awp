@@ -21,10 +21,20 @@
 
 需要 DeepSeek Harness 0.2.2 或更新版本（Desktop 或 `dsh web`）。
 
+### 从 npm 安装
+
+在 DSH「设置 → 插件 → 添加插件」中输入 `dsh-awp`，或使用命令行：
+
+```sh
+dsh plugin --profile desktop add dsh-awp
+```
+
+Web 用户将 `desktop` 改为 `web`。需要固定版本时使用 `dsh-awp@0.3.6`。从 npm 安装后，可通过 DSH 插件管理器查询和更新版本；已有本地 `.tgz` 安装需改用 npm 来源，才能使用注册表版本更新。
+
 ### 从打包文件安装
 
 1. 从 [GitHub Releases](https://github.com/66neko/dsh-awp/releases) 的 Assets 下载 `dsh-awp-<版本>.tgz`，或自行打包（见下方「开发」）。
-2. 打开 DSH「设置 → 插件 → 添加插件」，输入 `.tgz` 文件的**绝对路径**，例如 `D:\downloads\dsh-awp-0.3.5.tgz`。
+2. 打开 DSH「设置 → 插件 → 添加插件」，输入 `.tgz` 文件的**绝对路径**，例如 `D:\downloads\dsh-awp-0.3.6.tgz`。
 3. **安装不需要联网**：运行所需的 `mqtt` 及其传递依赖已随包放在 `vendor/` 里。
 
 ### 从源码目录安装
@@ -189,7 +199,7 @@ pnpm pack          打包成 dsh-awp-<版本>.tgz
 
    ```sh
    npm login --registry=https://registry.npmjs.org/
-   npm publish ./dsh-awp-0.3.5.tgz --access public --registry=https://registry.npmjs.org/
+   npm publish ./dsh-awp-0.3.6.tgz --access public --registry=https://registry.npmjs.org/
    ```
 
 2. 打开 npm 网站的 **dsh-awp → Settings → Trusted publishing → Add trusted publisher**，选择 **GitHub Actions**，填写：
