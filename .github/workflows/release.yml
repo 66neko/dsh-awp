@@ -123,7 +123,7 @@ jobs:
     env:
       RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
       PACKAGE_VERSION: ${{ needs.package.outputs.version }}
-      ARCHIVE: dist/dsh-awp-${{ needs.package.outputs.version }}.tgz
+      ARCHIVE: ./dist/dsh-awp-${{ needs.package.outputs.version }}.tgz
     steps:
       - name: 下载已经检查的插件包
         uses: actions/download-artifact@v4
