@@ -208,6 +208,8 @@ pnpm pack             # 生成 dsh-awp-<版本>.tgz
 
 GitHub 发布流程由 `.github/workflows/release.yml` 管理：发布 Release（含预发布版）时检出对应标签，校验标签与包版本一致，在 Node.js 24 上安装锁定依赖、检查语法、运行测试并打包，将 `.tgz` 上传为 Release 附件。支持手动运行以验证打包，或为已有 Release 补传附件；工作流配置不进入插件安装包。
 
+npm 同步发布由仓库变量 `NPM_PUBLISH_ENABLED=true` 启用，使用独立任务下载前一步已经验证的同一个安装包，通过 npm Trusted Publishing（GitHub OIDC）上传，不存储长期 npm Token。npm 包首次发布和包级 Trusted Publisher 绑定由维护者完成，配置步骤见 README。未启用时只交付 Release 附件。正式版使用 `latest`，GitHub 预发布版或 SemVer 预发布版本使用 `next`；重跑时检查 npm 已有版本的 SHA-512 完整性，一致则跳过，不同则拒绝覆盖。npm 任务失败会使同步发布失败，但保留已上传的 Release 附件，便于修正配置后重试。
+
 ### 8.1 vendor 内置模块兼容性
 
 部分 vendored 依赖会写成 require('process/') 或 require('string_decoder/')。这些写法在 Node 运行时可用，但会被 DSH 的模块解析器当作普通包名，导致 resolve.paths 返回空值并在加载插件时崩溃。每次执行 scripts/vendor-deps.mjs 时，脚本递归扫描生成的 JavaScript 文件，仅将精确匹配的 Node 内置模块改写为 require('node:<内置模块>')；普通第三方包不会被改动，重复执行结果稳定。CI 会重新生成 vendor 并检查仓库内容一致。

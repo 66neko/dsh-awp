@@ -24,7 +24,7 @@
 ### 从打包文件安装
 
 1. 从 [GitHub Releases](https://github.com/66neko/dsh-awp/releases) 的 Assets 下载 `dsh-awp-<版本>.tgz`，或自行打包（见下方「开发」）。
-2. 打开 DSH「设置 → 插件 → 添加插件」，输入 `.tgz` 文件的**绝对路径**，例如 `D:\downloads\dsh-awp-0.3.4.tgz`。
+2. 打开 DSH「设置 → 插件 → 添加插件」，输入 `.tgz` 文件的**绝对路径**，例如 `D:\downloads\dsh-awp-0.3.5.tgz`。
 3. **安装不需要联网**：运行所需的 `mqtt` 及其传递依赖已随包放在 `vendor/` 里。
 
 ### 从源码目录安装
@@ -180,6 +180,36 @@ pnpm pack          打包成 dsh-awp-<版本>.tgz
 正式版和预发布版都会触发；保存为草稿时不会触发。标签支持 `v<版本>` 或 `<版本>`，必须与 `package.json` 一致；检查或打包失败时不会上传插件包，可在 Actions 页面查看原因并重新运行。
 
 也可以在 Actions →「打包并上传插件」→ Run workflow 手动运行：标签留空时仅检查和打包，产物保留 14 天；填写已有 Release 的标签时，会为该 Release 上传或替换同名安装包。自动流程使用 GitHub 提供的 `GITHUB_TOKEN`，无需配置额外密钥。
+
+#### 同步发布到 npm
+
+工作流已包含可选的 npm 发布任务。先完成一次性配置，再把仓库变量 `NPM_PUBLISH_ENABLED` 设为 `true`，之后每次发布 GitHub Release 都会将同一个已检查的 `.tgz` 发布到 npm。尚未配置时，GitHub Release 打包照常执行，npm 任务显示为跳过。
+
+1. 注册 npm 账号、验证邮箱并启用双重验证（2FA）。首次发布在本机完成，以便创建包并取得维护权限。下载要发布版本的 Release 附件，在该文件所在目录执行（版本以实际文件为准）：
+
+   ```sh
+   npm login --registry=https://registry.npmjs.org/
+   npm publish ./dsh-awp-0.3.5.tgz --access public --registry=https://registry.npmjs.org/
+   ```
+
+2. 打开 npm 网站的 **dsh-awp → Settings → Trusted publishing → Add trusted publisher**，选择 **GitHub Actions**，填写：
+
+   | 设置项 | 值 |
+   |---|---|
+   | Organization or user | `66neko` |
+   | Repository | `dsh-awp` |
+   | Workflow filename | `release.yml`（不带目录） |
+   | Environment name | 留空 |
+   | Allow npm publish | 启用直接发布 |
+
+3. 打开 GitHub 仓库的 **Settings → Secrets and variables → Actions → Variables → New repository variable**，名称填 `NPM_PUBLISH_ENABLED`，值填 `true`。这是普通变量；Trusted Publishing 使用 GitHub 的 OIDC 身份，不需要 `NPM_TOKEN` Secret。不要把 npm 密码或验证码放进仓库。
+4. 递增版本并发布新的 GitHub Release。在 Actions 中确认「检查并打包」和「发布到 npm」两个任务成功，再运行 `npm view dsh-awp version --registry=https://registry.npmjs.org/` 核对正式版本。
+
+按 npm 当前规则，新建的 Trusted Publisher 配置需在两天内完成第一次成功发布；超时需删除后重建。因此应在准备发布下一个版本时完成第 2、3 步。工作流使用 GitHub 托管 runner、Node.js 24、支持 OIDC 的 npm CLI，并仅给 npm 任务 `id-token: write` 权限。配置细节见 [npm Trusted Publishing 文档](https://docs.npmjs.com/trusted-publishers/)。
+
+正式版发布到 npm 的 `latest`，GitHub 预发布版或带预发布后缀的包版本发布到 `next`。npm 同一版本不能覆盖；重跑时，已存在版本只有在安装包完整性哈希一致时才跳过重复上传，内容不同会报错。已发布版本的 dist-tag 不会在重跑时自动调整；将预发布版转为正式版时应发布新的正式版本。
+
+npm 发布失败不影响已经上传的 Release 附件，但同步发布尚未完成。修正 npm 配置后可在 Actions 重跑失败的 npm 任务；也可手动运行工作流并填写对应标签，重建安装包后再发布。仓库变量启用时，带标签的手动运行也会发布到 npm；标签留空则始终只检查和打包。
 
 ## 文档
 
