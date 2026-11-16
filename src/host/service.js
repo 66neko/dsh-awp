@@ -20,7 +20,7 @@ import { registerTools } from './tools.js'
 import { registerRpc } from './rpc.js'
 
 /** 插件版本，出现在 pong 响应里。 */
-const PLUGIN_VERSION = '0.3.3'
+const PLUGIN_VERSION = '0.3.4'
 
 /**
  * 网络层签名：只有这些字段变化才需要重建监听与连接。

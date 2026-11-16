@@ -105,6 +105,9 @@ export function registerTools(ctx, { resolve }) {
     name: 'awp_send',
     description: [
       '把任务派给某个对端节点执行。默认异步：立即返回任务号，任务完成后结果会作为一条新消息自动送回本会话（会唤醒你继续处理），不需要轮询。',
+      '话题连续性：向同一 peer 继续、补充、修正或验收当前话题时，默认用 follow 续接该话题最近一个已结束任务的 task ID，保留执行方上下文；由你根据用户意图选择关联任务，不要混用该节点的其他话题。',
+      '全新独立任务、用户明确要求重新开始或没有可用关联任务时省略 follow，并在 prompt 中提供必要背景；省略 follow 会新建会话，不会自动继承历史。',
+      'follow 使用 awp_send 返回值或 [AWP 结果] 消息中的真实 task ID，不要猜测或填写会话 ID。续接前先等该话题最新任务结束，避免同一话题并发投递。',
       'waitSec 大于 0 时才同步等待：最多等这么多秒，等到就返回结果，超时则返回 running 并继续异步回送。',
       'timeoutSec 是「执行方允许任务跑多久」，默认跟随执行方配置（通常 1 小时）；不适合用 waitSec 长时间阻塞，长任务请保持异步或者稍后用 awp_task 查询。',
     ].join(''),
@@ -112,10 +115,10 @@ export function registerTools(ctx, { resolve }) {
       type: 'object',
       properties: {
         peer: { type: 'string', description: '对端节点 ID' },
-        prompt: { type: 'string', description: '任务说明' },
+        prompt: { type: 'string', description: '任务说明；续接时说明本次新增要求，独立任务需提供必要背景' },
         title: { type: 'string', description: '短标题（可选）' },
         timeoutSec: { type: 'number', description: '执行方允许的运行时长（秒），留空用执行方默认值' },
-        follow: { type: 'string', description: '先前任务的 task id，在同一会话里继续（可选）' },
+        follow: { type: 'string', description: '同一 peer、当前话题最近一个已结束任务的 task ID；继续、补充、修正或验收时默认填写，独立新任务时省略。找到旧任务会话时保留上下文，找不到则新建会话' },
         waitSec: { type: 'number', description: '同步等待结果的秒数；0 表示异步（默认）' },
       },
       required: ['peer', 'prompt'],

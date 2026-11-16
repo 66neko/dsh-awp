@@ -155,8 +155,8 @@ export class Delegator {
     const record = this.store.getOutbound(taskId)
     if (!record || record.delivered) return
     const text = result.state === 'done'
-      ? `[AWP 结果] ${record.peer} 完成任务（${record.title}），用时 ${Math.round((result.elapsed ?? 0) / 1000)} 秒：\n\n${result.text}`
-      : `[AWP 结果] ${record.peer} 任务失败（${record.title}），状态 ${result.state}：${result.error?.message ?? '未知原因'}`
+      ? `[AWP 结果] ${record.peer} 完成任务 ${taskId}（${record.title}），用时 ${Math.round((result.elapsed ?? 0) / 1000)} 秒：\n\n${result.text}`
+      : `[AWP 结果] ${record.peer} 任务 ${taskId} 失败（${record.title}），状态 ${result.state}：${result.error?.message ?? '未知原因'}`
     this.harness.prompt({ sessionId: record.originSessionId, text }).then(() => {
       record.delivered = true
       this.store.setOutbound(taskId, record)
