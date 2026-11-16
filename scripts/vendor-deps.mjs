@@ -266,7 +266,7 @@ writeFileSync(join(vendorDir, 'README.md'), [
   `- 包数：${closure.size}`,
   `- 体积：${(total / 1024 / 1024).toFixed(2)} MB`,
   '',
-  "- Node 内置模块兼容性：将 vendored 代码中的 require('<内置模块>/') 规范化为 require('node:<内置模块>')，避免模块解析器误判为普通包。",
+  "- Node 内置模块兼容性：将 vendored 代码中的 `require('<内置模块>/')` 规范化为 `require('node:<内置模块>')`，避免模块解析器误判为普通包。",
   '',
   '重新生成：`pnpm run vendor`（需要先 `pnpm install`）。',
   '',
