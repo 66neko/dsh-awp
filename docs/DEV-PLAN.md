@@ -206,6 +206,10 @@ pnpm pack             # 生成 dsh-awp-<版本>.tgz
 
 GitHub 发布流程由 `.github/workflows/release.yml` 管理：发布 Release（含预发布版）时检出对应标签，校验标签与包版本一致，在 Node.js 24 上安装锁定依赖、检查语法、运行测试并打包，将 `.tgz` 上传为 Release 附件。支持手动运行以验证打包，或为已有 Release 补传附件；工作流配置不进入插件安装包。
 
+### 8.1 vendor 内置模块兼容性
+
+部分 vendored 依赖会写成 require('process/') 或 require('string_decoder/')。这些写法在 Node 运行时可用，但会被 DSH 的模块解析器当作普通包名，导致 resolve.paths 返回空值并在加载插件时崩溃。每次执行 scripts/vendor-deps.mjs 时，脚本递归扫描生成的 JavaScript 文件，仅将精确匹配的 Node 内置模块改写为 require('node:<内置模块>')；普通第三方包不会被改动，重复执行结果稳定。CI 会重新生成 vendor 并检查仓库内容一致。
+
 ## 9. 以后接入 Claude Code 和 Codex
 
 `src/core/` 不引用 DSH，可以直接复用：

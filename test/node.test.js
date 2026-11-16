@@ -350,4 +350,43 @@ describe('node lifecycle', () => {
     assert.equal(reply.body.agent, 'dsh')
     await node.stop()
   })
+  
+  it('异步传输按节点 ID 寻址：对端 URL 为空字符串时也必须发到 node-b', async () => {
+    const sent = []
+    const transport = {
+      syncReply: false,
+      async start() {},
+      async send(to) {
+        sent.push(to)
+        throw new Error('publish failed')
+      },
+      async stop() {},
+    }
+    const node = new AwpNode({
+      nodeId: 'node-a',
+      secret: SECRET,
+      transport,
+      peers: new Map([['node-b', { url: '' }]]),
+      log: () => {},
+    })
+    await node.start(async () => null)
+    try {
+      await assert.rejects(
+        node.request('node-b', makeEnvelope({ type: 'ping', from: 'node-a', to: 'node-b' }), {
+          timeoutMs: 50,
+          retries: 0,
+        }),
+        /publish failed/,
+      )
+      node.push('node-b', makeEnvelope({ type: 'ping', from: 'node-a', to: 'node-b' }))
+      await new Promise((resolve) => setImmediate(resolve))
+      assert.deepEqual(
+        sent,
+        ['node-b', 'node-b'],
+        '异步传输必须按节点 ID 发布，而不是把空 URL 当作主题地址',
+      )
+    } finally {
+      await node.stop()
+    }
+  })
 })

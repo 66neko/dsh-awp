@@ -14,7 +14,8 @@
  */
 
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, join, relative } from 'node:path'
+import { builtinModules } from 'node:module'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -160,6 +161,43 @@ function collectClosure(index) {
   return { closure, warnings }
 }
 
+/**
+ * 将依赖中把 Node 内置模块当作包名加载的写法规范化。
+ *
+ * 只匹配 require('<builtin>/') 这一精确形式；普通包不会被改写，
+ * 脚本可重复运行。
+ * @param {string} dir - vendor 模块目录。
+ * @returns {Array<string>} 被改写的文件与模块名。
+ */
+function rewriteBuiltinSlashRequires(dir) {
+  const builtinNames = new Set(
+    builtinModules.map((name) => name.startsWith('node:') ? name.slice(5) : name),
+  )
+  const rewrites = []
+  const visit = (current) => {
+    for (const entry of readdirSync(current, { withFileTypes: true })) {
+      const path = join(current, entry.name)
+      if (entry.isDirectory()) {
+        visit(path)
+        continue
+      }
+      if (!entry.isFile() || !/\.(?:cjs|mjs|js)$/.test(entry.name)) continue
+      const source = readFileSync(path, 'utf8')
+      const rewritten = source.replace(
+        /require\((['"])([A-Za-z_$][\w$]*)\/\1\)/g,
+        (match, quote, name) => {
+          if (!builtinNames.has(name)) return match
+          rewrites.push(relative(root, path) + ': ' + name)
+          return 'require(' + quote + 'node:' + name + quote + ')'
+        },
+      )
+      if (rewritten !== source) writeFileSync(path, rewritten, 'utf8')
+    }
+  }
+  visit(dir)
+  return rewrites
+}
+
 const checkOnly = process.argv.includes('--check')
 
 if (!existsSync(store)) {
@@ -197,6 +235,11 @@ for (const [name, picked] of closure) {
     filter: (path) => basename(path) !== 'node_modules',
   })
 }
+const slashRewrites = rewriteBuiltinSlashRequires(vendorModules)
+if (slashRewrites.length > 0) {
+  console.log(`规范化 Node 内置模块加载：${slashRewrites.length} 处`)
+  for (const rewrite of slashRewrites) console.log(`  ${rewrite}`)
+}
 
 writeFileSync(join(vendorDir, 'mqtt.js'), [
   '/**',
@@ -222,6 +265,8 @@ writeFileSync(join(vendorDir, 'README.md'), [
   `- 入口包：\`${ENTRY}\``,
   `- 包数：${closure.size}`,
   `- 体积：${(total / 1024 / 1024).toFixed(2)} MB`,
+  '',
+  "- Node 内置模块兼容性：将 vendored 代码中的 require('<内置模块>/') 规范化为 require('node:<内置模块>')，避免模块解析器误判为普通包。",
   '',
   '重新生成：`pnpm run vendor`（需要先 `pnpm install`）。',
   '',

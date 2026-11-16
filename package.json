@@ -1,6 +1,6 @@
 {
   "name": "dsh-awp",
-  "version": "0.3.1",
+  "version": "0.3.3",
   "description": "让多个 AI Agent 互相指派任务的 DeepSeek Harness 插件 | Agent Work Protocol (AWP) plugin for DeepSeek Harness",
   "keywords": [
     "deepseek-harness",

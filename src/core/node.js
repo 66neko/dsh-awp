@@ -14,6 +14,19 @@
 import { decodeFrame, encodeFrame, makeEnvelope, newId, validateEnvelope, AwpError } from './frame.js'
 import { DedupeCache } from './dedupe.js'
 import { setTimeout as wait } from 'node:timers/promises'
+/**
+ * 按传输层语义选择投递地址。
+ *
+ * HTTP 等同步传输使用对端 URL；MQTT 等异步传输使用节点 ID，
+ * 即使配置里的 URL 是空字符串，也不会把消息发布到主题前缀本身。
+ * @param {object} transport - 当前传输层。
+ * @param {{ url?: string }} peer - 对端配置。
+ * @param {string} to - 对端节点 ID。
+ * @returns {string} 传输层应使用的投递地址。
+ */
+function deliveryAddress(transport, peer, to) {
+  return transport?.syncReply === false ? to : peer.url ?? to
+}
 
 /** AWP 节点。 */
 export class AwpNode {
@@ -212,7 +225,7 @@ export class AwpNode {
         // 对端回复都不能被未完成的发送挡住。失败较晚的发送也由 race 接住。
         const sending = Promise.resolve().then(() => {
           signal.throwIfAborted()
-          return transport.send(peer.url ?? to, frame, { timeoutMs })
+          return transport.send(deliveryAddress(transport, peer, to), frame, { timeoutMs })
         })
         const completed = waiter
           ? await Promise.race([
@@ -310,7 +323,7 @@ export class AwpNode {
       return
     }
     const frame = encodeFrame(envelope, this.secret)
-    this.transport.send(peer.url ?? to, frame).catch((error) => {
+    this.transport.send(deliveryAddress(this.transport, peer, to), frame).catch((error) => {
       this.log('warn', `推送失败：to=${to}, ${error?.message ?? error}`)
     })
   }
